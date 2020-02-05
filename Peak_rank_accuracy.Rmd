@@ -1,0 +1,120 @@
+---
+title: "plots"
+author: "Gaurav"
+date: "April 24, 2019"
+output: html_document
+---
+
+```{r}
+#fimo_GEM_GBS_IMR_peakrank <- read.table('fimo_GEM_GBS_IMR_peakrank.bed',sep = '\t',header = F, stringsAsFactors = F)
+
+#Peak positions in events file
+GEM_IMR90.GEM_events <- read.table('GEM_IMR90.GEM_events.bed',sep = '\t',header = F, stringsAsFactors = F, skip = 1)
+Genetrack_IMR90_events <- read.table('IMR90_peaks_intersect.csv',sep = '\t',header = F, stringsAsFactors = F, skip = 1)
+MACE_IMR90_events <- read.table('MACE_IMR90_output.border_pair.bed',sep = '\t',header = F, stringsAsFactors = F, skip = 1)
+MACS_IMR90_events <- read.table('IMR90_MACS.narrowPeak',sep = '\t',header = F, stringsAsFactors = F, skip = 1)
+Peakzilla_IMR90_events <- read.table('IMR90_GR_chip_exo_peaks_peakzilla.tsv',sep = '\t',header = F, stringsAsFactors = F, skip = 1)
+
+#motif positions
+fimo_IMR90_GEM <- read.table('fimo_IMR90_GEM.gff',sep = '\t',header = F, stringsAsFactors = F)
+fimo_IMR90_Genetrack <- read.table('fimo_Genetrack_IMR90.tsv', sep = '\t',header = T, stringsAsFactors = F)
+fimo_IMR90_MACE <- read.table('fimo_IMR90_MACE.tsv', sep = '\t',header = T, stringsAsFactors = F)
+fimo_IMR90_MACS <- read.table('fimo_MACS_IMR90.tsv', sep = '\t',header = T, stringsAsFactors = F)
+fimo_IMR90_Peakzilla <- read.table('fimo_Peakzilla_IMR90.tsv', sep = '\t',header = T, stringsAsFactors = F)
+#fimo <- read.table('fimo.tsv',sep = '\t',header = T, stringsAsFactors = F)
+```
+
+```{r}
+#A function to pre-process fimo file to make it suitable for downstream analysis
+library(stringr)
+preprocess_fimo <- function(fimo_file){
+      initial_cols <- ncol(fimo_file)
+      chr_col <- sapply(1:6,function(x){grepl('chr',unlist(fimo_file[2,])[[x]])})
+      chr_col <- which(chr_col)
+      fimo_file <- cbind(fimo_file, str_split_fixed(fimo_file[,chr_col], ":", 2))
+      fimo_file <- cbind(fimo_file,str_split_fixed(fimo_file$`2`,'-',2))
+      fimo_file[,chr_col] <- NULL
+      fimo_file[,(initial_cols + 1)] <- NULL
+      return(fimo_file)
+      
+}
+```
+
+```{r}
+fimo_IMR90_GEM <- preprocess_fimo(fimo_IMR90_GEM)
+fimo_IMR90_Genetrack <- preprocess_fimo(fimo_IMR90_Genetrack)
+fimo_IMR90_MACE <- preprocess_fimo(fimo_IMR90_MACE)
+fimo_IMR90_MACS <- preprocess_fimo(fimo_IMR90_MACS)
+fimo_IMR90_Peakzilla <- preprocess_fimo(fimo_IMR90_Peakzilla)
+#sort according to a score or p-value p-value 
+library(dplyr)
+GEM_IMR90.GEM_events <- GEM_IMR90.GEM_events %>% arrange(desc(V5))
+Genetrack_IMR90_events <- Genetrack_IMR90_events %>% arrange(desc(V6))
+MACE_IMR90_events <- MACE_IMR90_events %>% arrange(V5)
+MACS_IMR90_events <- MACS_IMR90_events %>% arrange(desc(V8))
+Peakzilla_IMR90_events <- Peakzilla_IMR90_events %>% arrange(desc(V6))
+
+```
+Find present function
+```{r}
+find_present <- function(bedfile,fimofile){
+  present <- rep(0,nrow(bedfile))
+  fimo_start_col <- fimofile[,(ncol(fimofile) - 1)]
+  fimo_start_col <- as.numeric(levels(fimo_start_col))[fimo_start_col]
+  fimo_chr_col <- fimofile[,(ncol(fimofile) - 2)]
+  fimo_chr_col <- as.character(levels(fimo_chr_col))[fimo_chr_col]
+  present <- sapply(1:nrow(bedfile),function(x){
+     p <- 0
+     chr_indices <- which(fimo_chr_col == bedfile[x,1])
+     as.integer(any(abs(bedfile[x,2] - fimo_start_col[chr_indices]) <= 50))
+  })
+}
+```
+  return(present)
+Check for presence of motifs in top-ranked peaks
+```{r}
+GEM_IMR90.GEM_events$present <- find_present(GEM_IMR90.GEM_events,fimo_IMR90_GEM)
+Genetrack_IMR90_events$V2 <- NULL
+Genetrack_IMR90_events$V3 <- NULL
+Genetrack_IMR90_events$present <- find_present(Genetrack_IMR90_events, fimo_IMR90_Genetrack)
+MACE_IMR90_events$present <- find_present(MACE_IMR90_events,fimo_IMR90_MACE)
+MACS_IMR90_events$present <- find_present(MACS_IMR90_events, fimo_IMR90_MACS)
+Peakzilla_IMR90_events$present <- find_present(Peakzilla_IMR90_events, fimo_IMR90_Peakzilla)
+
+```
+Function to get the percentage of top peaks present in motif files in bin size of 100
+```{r}
+get_pcent_present <- function(events_df, limit = 20000){ #first 20k peaks
+    pcent_present <- NULL
+for(i in seq(1,limit,50)){
+      pcent_present <- c(pcent_present,sum(events_df$present[1:(i+49)])/(i+49))
+} 
+    return(list(pcent_present = pcent_present, index = seq(1,limit,50)))
+}
+```
+
+```{r}
+gem_pcent <- get_pcent_present(GEM_IMR90.GEM_events)
+genetrack_pcent <- get_pcent_present(Genetrack_IMR90_events)
+mace_pcent <- get_pcent_present(MACE_IMR90_events)
+macs_pcent <- get_pcent_present(MACS_IMR90_events)
+peakzilla_pcent <- get_pcent_present(Peakzilla_IMR90_events)
+```
+
+```{r}
+#Make necessary Data frames
+df1 <- data.frame(bin_number = gem_pcent$index, percentage_of_true_peaks = gem_pcent$pcent_present, tool = "GEM")
+df2 <- data.frame(bin_number = genetrack_pcent$index, percentage_of_true_peaks = genetrack_pcent$pcent_present, tool = "Genetrack")
+df3 <- data.frame(bin_number = mace_pcent$index, percentage_of_true_peaks = mace_pcent$pcent_present, tool = "MACE")
+df4 <- data.frame(bin_number = macs_pcent$index, percentage_of_true_peaks = macs_pcent$pcent_present, tool = "MACS")
+df5 <- data.frame(bin_number = peakzilla_pcent$index, percentage_of_true_peaks = peakzilla_pcent$pcent_present, tool = "Peakzilla")
+df <- rbind(df1,df2,df3,df4,df5)
+```
+
+```{r}
+library(ggplot2)
+library(ggformula)
+plot <-ggplot(df, aes(colour = tool)) + geom_spline(aes(x = bin_number, y= percentage_of_true_peaks)) +labs(x = "Peak Rank", y = "Fration of MA0113.2 motif in IMR90 data", color = "Tool", title = "Peak rank accuracy for IMR90 data", tag = "A") + theme_bw() + theme(plot.title = element_text(hjust = 0.5)) #+ 
+plot
+```
+
